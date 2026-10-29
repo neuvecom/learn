@@ -1,0 +1,73 @@
+---
+import '../styles/global.css';
+import { url } from '../data/courses';
+
+interface Props {
+    title?: string;
+    description?: string;
+}
+
+const SITE_TITLE = 'neuve 学習コース';
+const { title, description = '音楽制作・Web 解析・開発ツールを無料で学べる neuve の学習コース一覧。Google ログインで全コースの進捗を端末をまたいで同期できます。' } = Astro.props;
+const pageTitle = title ? `${title} | ${SITE_TITLE}` : SITE_TITLE;
+const path = Astro.url.pathname;
+const nav = [
+    { href: url(''), label: 'コース一覧' },
+    { href: url('mypage/'), label: 'マイページ' },
+];
+const kofiUser = 'otasuke';
+---
+
+<!doctype html>
+<html lang="ja">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>{pageTitle}</title>
+        <meta name="description" content={description} />
+        <meta property="og:title" content={pageTitle} />
+        <meta property="og:description" content={description} />
+        <meta property="og:type" content="website" />
+        <link rel="icon" href={url('favicon.svg')} type="image/svg+xml" />
+        <script is:inline type="module" src={url('kit/neuve-learn.js')}></script>
+        <script is:inline src="https://cdn.jsdelivr.net/gh/neuvecom/kofi-banner@v1.0.0/kofi-banner.js" defer></script>
+    </head>
+    <body>
+        <header class="site-header">
+            <div class="container">
+                <a class="brand" href={url('')}>neuve <span>学習コース</span></a>
+                <nav class="site-nav" aria-label="メインメニュー">
+                    {
+                        nav.map((n) => (
+                            <a href={n.href} aria-current={path === n.href ? 'page' : undefined}>
+                                {n.label}
+                            </a>
+                        ))
+                    }
+                    <neuve-auth></neuve-auth>
+                </nav>
+            </div>
+        </header>
+        <main>
+            <div class="container">
+                <slot />
+                <div class="kofi">
+                    <kofi-banner user={kofiUser}>
+                        <a href={`https://ko-fi.com/${kofiUser}`}>Ko-fi で制作者を支援する</a>
+                    </kofi-banner>
+                </div>
+            </div>
+        </main>
+        <footer class="site-footer">
+            <div class="container">
+                <p>neuve 学習コースはすべて無料で読めます。ログインは進捗の保存にだけ使い、ほかの目的には使いません。</p>
+            </div>
+        </footer>
+    </body>
+</html>
+
+<style>
+    .kofi {
+        margin-top: 3rem;
+    }
+</style>

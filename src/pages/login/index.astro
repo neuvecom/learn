@@ -1,0 +1,166 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { url } from '../../data/courses';
+---
+
+<BaseLayout title="ログイン" description="ログインすると、全コースの学習の進捗を端末をまたいで保存できます。">
+    <div class="login card" data-login>
+        <h1>ログイン</h1>
+        <p class="muted">
+            ログインすると、全コースのレッスンの完了を記録でき、どの端末からでも続きから学べます。記事はログインしなくても読めます。
+        </p>
+
+        <section data-when="signed-out" hidden>
+            <button type="button" class="button" data-google>Google でログイン</button>
+
+            <h2>メールアドレスでログイン</h2>
+            <p class="muted">パスワードは不要です。入力したアドレスにログイン用のリンクを送ります。</p>
+            <form data-email-form>
+                <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" />
+                <button type="submit" class="button secondary">ログインリンクを送る</button>
+            </form>
+        </section>
+
+        <section data-when="signed-in" hidden>
+            <p><strong data-user-name></strong> でログインしています。</p>
+            <div class="actions">
+                <a class="button" href={url('mypage/')} data-next>マイページへ</a>
+                <button type="button" class="button secondary" data-logout>ログアウト</button>
+            </div>
+        </section>
+
+        <p class="message" data-message aria-live="polite"></p>
+    </div>
+</BaseLayout>
+
+<script>
+    import {
+        GoogleAuthProvider,
+        isSignInWithEmailLink,
+        sendSignInLinkToEmail,
+        signInWithEmailLink,
+        signInWithPopup,
+    } from 'https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js';
+    import { loadKit } from '../../scripts/learn';
+
+    const kit = await loadKit();
+    const { auth } = kit;
+    const EMAIL_KEY = 'neuve-learn:emailForSignIn';
+    const root = document.querySelector<HTMLElement>('[data-login]')!;
+    const message = root.querySelector<HTMLElement>('[data-message]')!;
+
+    // ログイン後に戻る先（同じオリジンのページだけを許可する）
+    const params = new URLSearchParams(location.search);
+    const nextParam = params.get('next');
+    let next: string | null = null;
+    if (nextParam) {
+        try {
+            const nextUrl = new URL(nextParam, location.href);
+            if (nextUrl.origin === location.origin) next = nextUrl.href;
+        } catch {
+            // 不正な URL は無視する
+        }
+    }
+    if (next) {
+        const link = root.querySelector<HTMLAnchorElement>('[data-next]')!;
+        link.href = next;
+        link.textContent = '元のページに戻る';
+    }
+
+    const thisPage = () => {
+        const page = new URL(location.pathname, location.origin);
+        if (next) page.searchParams.set('next', next);
+        return page.href;
+    };
+
+    let justSignedIn = false;
+    kit.onUser((user) => {
+        root.querySelectorAll<HTMLElement>('[data-when]').forEach((el) => {
+            el.hidden = el.dataset.when !== (user ? 'signed-in' : 'signed-out');
+        });
+        if (user) {
+            root.querySelector<HTMLElement>('[data-user-name]')!.textContent =
+                user.displayName || user.email || 'あなた';
+            // このページでログインした直後なら、元のページへ自動で戻る
+            if (justSignedIn && next) location.href = next;
+        }
+    });
+
+    root.querySelector('[data-google]')!.addEventListener('click', async () => {
+        message.textContent = '';
+        try {
+            justSignedIn = true;
+            await signInWithPopup(auth, new GoogleAuthProvider());
+        } catch (error) {
+            justSignedIn = false;
+            console.error(error);
+            message.textContent = 'Google でのログインに失敗しました。もう一度お試しください。';
+        }
+    });
+
+    root.querySelector<HTMLFormElement>('[data-email-form]')!.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const email = new FormData(event.currentTarget as HTMLFormElement).get('email') as string;
+        try {
+            await sendSignInLinkToEmail(auth, email, { url: thisPage(), handleCodeInApp: true });
+            localStorage.setItem(EMAIL_KEY, email);
+            message.textContent = `${email} にログイン用のリンクを送りました。メールを開いてリンクをクリックしてください。`;
+        } catch (error) {
+            console.error(error);
+            message.textContent = 'メールを送れませんでした。アドレスを確認してもう一度お試しください。';
+        }
+    });
+
+    root.querySelector('[data-logout]')!.addEventListener('click', () => kit.logout());
+
+    // メールのリンクから戻ってきたときにログインを完了する
+    if (isSignInWithEmailLink(auth, location.href)) {
+        let email = localStorage.getItem(EMAIL_KEY);
+        if (!email) {
+            // 別の端末でリンクを開いた場合はアドレスを聞き直す
+            email = prompt('確認のため、ログインに使ったメールアドレスを入力してください');
+        }
+        if (email) {
+            justSignedIn = true;
+            signInWithEmailLink(auth, email, location.href)
+                .then(() => {
+                    localStorage.removeItem(EMAIL_KEY);
+                    history.replaceState(null, '', thisPage());
+                })
+                .catch((error) => {
+                    justSignedIn = false;
+                    console.error(error);
+                    message.textContent = 'リンクの有効期限が切れているか、すでに使われています。もう一度メールを送ってください。';
+                });
+        }
+    }
+</script>
+
+<style>
+    .login {
+        max-width: 640px;
+        margin-inline: auto;
+    }
+    .login h2 {
+        font-size: 1.05rem;
+        margin-top: 2rem;
+    }
+    form,
+    .actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+    input {
+        flex: 1 1 16rem;
+        padding: 0.55rem 0.8rem;
+        border: 1px solid var(--border);
+        border-radius: 0.5rem;
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+    }
+    .message:empty {
+        display: none;
+    }
+</style>

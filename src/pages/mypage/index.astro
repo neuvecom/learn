@@ -1,0 +1,183 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { courses, url } from '../../data/courses';
+---
+
+<BaseLayout title="マイページ" description="受講中のコースの進み具合と、次に読むレッスン。">
+    <h1>マイページ</h1>
+    <div data-mypage>
+        <p data-when="loading">読み込み中…</p>
+        <p data-when="signed-out" hidden>
+            進捗を見るには<a href={url('login/')}>ログイン</a>してください。
+        </p>
+        <p data-when="error" hidden data-error></p>
+        <div data-when="signed-in" hidden>
+            <p class="lead"><span data-user-name></span> さんの学習状況</p>
+
+            <h2>受講中のコース</h2>
+            <p class="muted" data-empty hidden>まだ完了したレッスンはありません。下のコースから始めてみましょう。</p>
+            <div class="list" data-active></div>
+
+            <h2>これから始められるコース</h2>
+            <div class="grid" data-others>
+                {
+                    courses.map((course) => (
+                        <article class="card other" data-course-id={course.id}>
+                            <h3>
+                                <a href={course.url}>{course.title}</a>
+                            </h3>
+                            <p class="muted">{course.summary}</p>
+                        </article>
+                    ))
+                }
+            </div>
+        </div>
+    </div>
+
+    <template data-course-template>
+        <article class="card active">
+            <div class="head">
+                <h3><a data-title></a></h3>
+                <span class="count" data-count></span>
+            </div>
+            <div class="bar"><span data-bar></span></div>
+            <p class="next" data-next-wrap>次は <a data-next></a></p>
+            <details>
+                <summary>レッスン一覧</summary>
+                <ol data-lessons></ol>
+            </details>
+        </article>
+    </template>
+</BaseLayout>
+
+<script>
+    import { courses } from '../../data/courses';
+    import { loadKit, loadProgress } from '../../scripts/learn';
+
+    const root = document.querySelector<HTMLElement>('[data-mypage]')!;
+    const template = document.querySelector<HTMLTemplateElement>('[data-course-template]')!;
+    const active = root.querySelector<HTMLElement>('[data-active]')!;
+    const show = (state: string) => {
+        root.querySelectorAll<HTMLElement>(':scope > [data-when]').forEach((el) => {
+            el.hidden = el.dataset.when !== state;
+        });
+    };
+
+    const kit = await loadKit();
+    kit.onUser(async (user) => {
+        if (!user) {
+            show('signed-out');
+            return;
+        }
+        root.querySelector<HTMLElement>('[data-user-name]')!.textContent = user.displayName || user.email || 'あなた';
+        let summaries: Record<string, { lastLessonId?: string; updatedAt?: { toMillis(): number } }>;
+        try {
+            summaries = await kit.getCourseSummaries();
+        } catch (error) {
+            console.error(error);
+            const code = (error as { code?: string }).code;
+            root.querySelector<HTMLElement>('[data-error]')!.textContent =
+                code === 'permission-denied'
+                    ? '進捗を読み込む権限がありません。サイト側の設定（Firestore のルール）を確認しています。'
+                    : '進捗を読み込めませんでした。時間をおいて再読み込みしてください。';
+            show('error');
+            return;
+        }
+
+        const results = await Promise.all(
+            courses
+                .filter((c) => c.progress)
+                .map(async (course) => ({
+                    course,
+                    progress: await loadProgress(course, summaries[course.id]?.lastLessonId).catch(() => null),
+                    updatedAt: summaries[course.id]?.updatedAt?.toMillis() ?? 0,
+                }))
+        );
+
+        // 最近学習したコースを上に並べる
+        const started = results
+            .filter((r) => r.progress && r.progress.done.size > 0)
+            .sort((a, b) => b.updatedAt - a.updatedAt);
+        active.replaceChildren();
+        for (const { course, progress } of started) {
+            const card = template.content.firstElementChild!.cloneNode(true) as HTMLElement;
+            const total = progress!.lessons.length;
+            const title = card.querySelector<HTMLAnchorElement>('[data-title]')!;
+            title.href = course.url;
+            title.textContent = course.title;
+            card.querySelector('[data-count]')!.textContent = `${progress!.done.size} / ${total} 完了`;
+            card.querySelector<HTMLElement>('[data-bar]')!.style.width = `${(progress!.done.size / total) * 100}%`;
+            const next = card.querySelector<HTMLAnchorElement>('[data-next]')!;
+            if (progress!.next) {
+                next.href = progress!.next.url;
+                next.textContent = progress!.next.title;
+            } else {
+                card.querySelector('[data-next-wrap]')!.textContent = '🎉 すべてのレッスンを完了しました';
+            }
+            const list = card.querySelector('[data-lessons]')!;
+            for (const lesson of progress!.lessons) {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = lesson.url;
+                a.textContent = lesson.title;
+                if (progress!.done.has(lesson.id)) li.classList.add('done');
+                li.append(a);
+                list.append(li);
+            }
+            active.append(card);
+            root.querySelector<HTMLElement>(`[data-others] [data-course-id="${course.id}"]`)!.hidden = true;
+        }
+        root.querySelector<HTMLElement>('[data-empty]')!.hidden = started.length > 0;
+        show('signed-in');
+    });
+</script>
+
+<style>
+    .list {
+        display: grid;
+        gap: 1rem;
+    }
+    .active .head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+    .active h3,
+    .other h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1.1rem;
+    }
+    .active h3 a,
+    .other h3 a {
+        color: var(--text);
+        text-decoration: none;
+    }
+    .count {
+        color: var(--muted);
+        font-size: 0.85rem;
+    }
+    .next {
+        margin: 0.75rem 0 0.25rem;
+    }
+    .other p {
+        margin: 0;
+        font-size: 0.9rem;
+    }
+    details {
+        font-size: 0.9rem;
+    }
+    summary {
+        cursor: pointer;
+        color: var(--muted);
+    }
+    ol {
+        padding-left: 1.5rem;
+    }
+    li.done::marker {
+        content: '✓ ';
+        color: var(--good);
+        font-weight: 700;
+    }
+</style>

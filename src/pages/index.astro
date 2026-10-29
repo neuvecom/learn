@@ -1,0 +1,146 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { courses, url } from '../data/courses';
+---
+
+<BaseLayout>
+    <section class="hero">
+        <h1>学びの続きを、<br />どの端末からでも。</h1>
+        <p class="lead">
+            音楽制作から Web 解析、開発ツールまで。neuve の学習コースはすべて無料で読めます。<br />
+            Google でログインすると、全コースの進み具合がスマホとパソコンで同期されます。
+        </p>
+        <div class="actions" data-hero>
+            <a class="button" href="#courses">コースを見る</a>
+            <a class="button secondary" href={url('login/')} data-when="signed-out">Google でログイン</a>
+            <a class="button secondary" href={url('mypage/')} data-when="signed-in" hidden>マイページで続きから</a>
+        </div>
+    </section>
+
+    <section class="features">
+        <div class="card">
+            <h3>1 回のログインで全コース</h3>
+            <p class="muted">どのコースでログインしても、ほかのコースにもそのまま引き継がれます。</p>
+        </div>
+        <div class="card">
+            <h3>端末をまたいで続きから</h3>
+            <p class="muted">完了したレッスンはクラウドに保存。別の端末でも続きから始められます。</p>
+        </div>
+        <div class="card">
+            <h3>マイページでまとめて確認</h3>
+            <p class="muted">受講中のコースの進み具合と、次に読むレッスンがひと目でわかります。</p>
+        </div>
+    </section>
+
+    <h2 id="courses">コース一覧</h2>
+    <div class="grid">
+        {
+            courses.map((course) => (
+                <article class="card course" data-course-id={course.id} data-progress={course.progress ? 'true' : 'false'}>
+                    <ul class="tags">
+                        {course.tags.map((tag) => (
+                            <li>{tag}</li>
+                        ))}
+                    </ul>
+                    <h3>
+                        <a href={course.url}>{course.title}</a>
+                    </h3>
+                    <p class="muted">{course.summary}</p>
+                    <div class="course-progress" data-course-progress hidden>
+                        <div class="bar">
+                            <span data-bar />
+                        </div>
+                        <p class="count" data-count />
+                    </div>
+                    <a class="button secondary" href={course.url} data-start>
+                        コースを読む
+                    </a>
+                </article>
+            ))
+        }
+    </div>
+</BaseLayout>
+
+<script>
+    import { courses } from '../data/courses';
+    import { loadKit, loadProgress } from '../scripts/learn';
+
+    const kit = await loadKit();
+    kit.onUser(async (user) => {
+        document.querySelectorAll<HTMLElement>('[data-hero] [data-when]').forEach((el) => {
+            el.hidden = el.dataset.when !== (user ? 'signed-in' : 'signed-out');
+        });
+        if (!user) return;
+        const summaries = await kit.getCourseSummaries().catch(() => ({}) as Record<string, { lastLessonId?: string }>);
+        for (const course of courses.filter((c) => c.progress)) {
+            const card = document.querySelector<HTMLElement>(`[data-course-id="${course.id}"]`)!;
+            loadProgress(course, summaries[course.id]?.lastLessonId)
+                .then((progress) => {
+                    if (!progress || progress.done.size === 0) return;
+                    const total = progress.lessons.length;
+                    card.querySelector<HTMLElement>('[data-course-progress]')!.hidden = false;
+                    card.querySelector<HTMLElement>('[data-bar]')!.style.width = `${(progress.done.size / total) * 100}%`;
+                    card.querySelector<HTMLElement>('[data-count]')!.textContent = `${progress.done.size} / ${total} 完了`;
+                    const start = card.querySelector<HTMLAnchorElement>('[data-start]')!;
+                    if (progress.next) {
+                        start.href = progress.next.url;
+                        start.textContent = '続きから';
+                    } else {
+                        start.textContent = '修了しました';
+                    }
+                })
+                .catch((error) => console.error(error));
+        }
+    });
+</script>
+
+<style>
+    .hero {
+        padding: 2rem 0 1rem;
+    }
+    .actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+    .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1rem;
+        margin-top: 2.5rem;
+    }
+    .features h3 {
+        margin: 0 0 0.25rem;
+        font-size: 1rem;
+    }
+    .features p {
+        margin: 0;
+        font-size: 0.9rem;
+    }
+    .course {
+        display: flex;
+        flex-direction: column;
+    }
+    .course h3 {
+        margin: 0 0 0.25rem;
+        font-size: 1.1rem;
+    }
+    .course h3 a {
+        color: var(--text);
+        text-decoration: none;
+    }
+    .course p {
+        margin: 0 0 1rem;
+        font-size: 0.9rem;
+        flex: 1;
+    }
+    .course .button {
+        align-self: flex-start;
+    }
+    .course-progress .count {
+        margin: 0.25rem 0 0.75rem;
+        flex: none;
+        font-size: 0.8rem;
+        color: var(--muted);
+    }
+</style>
