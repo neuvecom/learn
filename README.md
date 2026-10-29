@@ -39,6 +39,7 @@ https://neuve.com/learn/ で公開している、neuve の学習コース共通�
 | `getCompleted(courseId)` | 完了済みレッスン ID の Set |
 | `setCompleted(courseId, lessonId, done)` | 完了の記録・取り消し |
 | `syncCompleted(courseId, localIds)` | 端末の記録とサーバーの記録を合わせる（どちらも消さない） |
+| `mirrorLocalStorage({ course, prefix, isDone })` | レッスンごとに localStorage へ保存しているコース向け。端末とサーバーを双方向に同期し、以後の保存もサーバーへ反映 |
 | `loginUrl(next)` / `mypageUrl` | ポータルのログイン・マイページ URL |
 
 色は CSS カスタムプロパティ（`--neuve-auth-color`・`--neuve-auth-hover`・`--neuve-accent`・`--neuve-on-accent`・`--neuve-border`）で貼り先から変えられます。

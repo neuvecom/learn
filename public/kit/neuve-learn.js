@@ -74,13 +74,34 @@ export async function getCompleted(courseId) {
     return new Set(snapshot.docs.map((d) => fromDocId(d.id)));
 }
 
-/** レッスンの完了を記録する（done=false で取り消す）。未ログインなら false を返して何もしない */
-export async function setCompleted(courseId, lessonId, done) {
+/**
+ * 指定コースの完了記録を Map（レッスン ID → 記録）で返す（未ログインなら空）。
+ * 記録の local には、コース側が保存した端末の値（localStorage の文字列）が入っていることがある
+ */
+export async function getCompletedRecords(courseId) {
+    const user = await currentUser();
+    if (!user) return new Map();
+    const snapshot = await getDocs(lessonsRef(user.uid, courseId));
+    return new Map(snapshot.docs.map((d) => [fromDocId(d.id), d.data()]));
+}
+
+/** local（端末に保存していた値）は 4000 文字までの文字列だけ記録する */
+function lessonData(local) {
+    const data = { completedAt: serverTimestamp() };
+    if (typeof local === 'string' && local.length <= 4000) data.local = local;
+    return data;
+}
+
+/**
+ * レッスンの完了を記録する（done=false で取り消す）。未ログインなら false を返して何もしない。
+ * local に端末の保存値を渡すと、別の端末で同じ値を復元できる
+ */
+export async function setCompleted(courseId, lessonId, done, local) {
     const user = await currentUser();
     if (!user) return false;
     const lessonRef = doc(lessonsRef(user.uid, courseId), toDocId(lessonId));
     if (done) {
-        await setDoc(lessonRef, { completedAt: serverTimestamp() });
+        await setDoc(lessonRef, lessonData(local));
         await setDoc(doc(db, 'users', user.uid, 'courses', courseId), {
             lastLessonId: String(lessonId),
             updatedAt: serverTimestamp(),
@@ -89,6 +110,17 @@ export async function setCompleted(courseId, lessonId, done) {
         await deleteDoc(lessonRef);
     }
     return true;
+}
+
+/** まとめて書き込む（1 回のバッチは 500 件までなので分ける） */
+async function writeLessons(uid, courseId, entries) {
+    for (let i = 0; i < entries.length; i += 400) {
+        const batch = writeBatch(db);
+        entries.slice(i, i + 400).forEach(([id, local]) => {
+            batch.set(doc(lessonsRef(uid, courseId), toDocId(id)), lessonData(local));
+        });
+        await batch.commit();
+    }
 }
 
 /**
@@ -101,16 +133,78 @@ export async function syncCompleted(courseId, localIds = []) {
     const user = await currentUser();
     if (!user) return local;
     const remote = await getCompleted(courseId);
-    const missing = [...local].filter((id) => !remote.has(id));
-    // 1 回のバッチは 500 件までなので分けて書き込む
-    for (let i = 0; i < missing.length; i += 400) {
-        const batch = writeBatch(db);
-        missing.slice(i, i + 400).forEach((id) => {
-            batch.set(doc(lessonsRef(user.uid, courseId), toDocId(id)), { completedAt: serverTimestamp() });
-        });
-        await batch.commit();
-    }
+    await writeLessons(
+        user.uid,
+        courseId,
+        [...local].filter((id) => !remote.has(id)).map((id) => [id, undefined])
+    );
     return new Set([...remote, ...local]);
+}
+
+/**
+ * localStorage にレッスンごとのキー（prefix + レッスン ID）で進捗を保存しているコース向けの同期。
+ * - ログイン中は、端末にしかない記録をサーバーへ上げ、サーバーにしかない記録を端末へ書き戻す
+ * - 以後 localStorage にそのキーが書かれる・消されるたびに、サーバーへも反映する
+ * isDone(value) で「完了」とみなす値を判定する（既定はキーがあれば完了）。
+ * 端末へ書き戻したときは window に neuve-learn:synced イベント（detail: { course, restored }）を発行する。
+ */
+export function mirrorLocalStorage({ course, prefix, isDone = () => true }) {
+    const done = (value) => {
+        try {
+            return value != null && isDone(value);
+        } catch {
+            return false;
+        }
+    };
+
+    // 以後の書き込み・削除をサーバーへ反映する
+    const { setItem, removeItem } = Storage.prototype;
+    Storage.prototype.setItem = function (key, value) {
+        setItem.call(this, key, value);
+        if (this === localStorage && String(key).startsWith(prefix)) {
+            const id = String(key).slice(prefix.length);
+            setCompleted(course, id, done(String(value)), String(value)).catch((error) => console.error(error));
+        }
+    };
+    Storage.prototype.removeItem = function (key) {
+        removeItem.call(this, key);
+        if (this === localStorage && String(key).startsWith(prefix)) {
+            setCompleted(course, String(key).slice(prefix.length), false).catch((error) => console.error(error));
+        }
+    };
+
+    // ログインしたら突き合わせる
+    return onUser(async (user) => {
+        if (!user) return;
+        try {
+            const local = new Map();
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key?.startsWith(prefix)) {
+                    const value = localStorage.getItem(key);
+                    if (done(value)) local.set(key.slice(prefix.length), value);
+                }
+            }
+            const remote = await getCompletedRecords(course);
+            await writeLessons(
+                user.uid,
+                course,
+                [...local].filter(([id]) => !remote.has(id))
+            );
+            const restored = [];
+            remote.forEach((record, id) => {
+                if (!local.has(id) && typeof record.local === 'string') {
+                    setItem.call(localStorage, prefix + id, record.local);
+                    restored.push(id);
+                }
+            });
+            if (restored.length > 0) {
+                window.dispatchEvent(new CustomEvent('neuve-learn:synced', { detail: { course, restored } }));
+            }
+        } catch (error) {
+            console.error('進捗の同期に失敗しました', error);
+        }
+    });
 }
 
 /** マイページ用: コースごとの最終学習レッスン（{ [courseId]: { lastLessonId, updatedAt } }） */
@@ -266,8 +360,10 @@ const api = {
     onUser,
     currentUser,
     getCompleted,
+    getCompletedRecords,
     setCompleted,
     syncCompleted,
+    mirrorLocalStorage,
     getCourseSummaries,
     logout,
 };
