@@ -35,6 +35,14 @@ export const courses: Course[] = [
         progress: true,
     },
     {
+        id: 'rust',
+        title: 'Rust をゼロから学ぶ',
+        summary: 'プログラミング未経験から Rust を身につけ、生成 AI と一緒に Web アプリを作れるようになる教材。',
+        url: 'https://neuve.com/rust-learning/',
+        tags: ['開発', 'プログラミング入門'],
+        progress: true,
+    },
+    {
         id: 'vcv-rack',
         title: 'ゼロからの VCV Rack',
         summary: 'DTM がまったく初めての人でもわかる、VCV Rack の日本語ハウツー。',
