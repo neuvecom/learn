@@ -29,6 +29,13 @@ const kofiUser = 'otasuke';
         <meta property="og:description" content={description} />
         <meta property="og:type" content="website" />
         <link rel="icon" href={url('favicon.svg')} type="image/svg+xml" />
+        <!-- ホーム画面に追加できるアプリ（PWA）としての設定。scope が neuve.com 全体なので各コースもアプリ内で開く -->
+        <link rel="manifest" href={url('manifest.webmanifest')} />
+        <meta name="theme-color" content="#e8710a" />
+        <link rel="apple-touch-icon" href={url('icons/apple-touch-icon.png')} />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="neuve 学習" />
         <script is:inline type="module" src={url('kit/neuve-learn.js')}></script>
         <script is:inline src="https://cdn.jsdelivr.net/gh/neuvecom/kofi-banner@v1.0.0/kofi-banner.js" defer></script>
     </head>
