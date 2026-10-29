@@ -223,6 +223,7 @@ export async function logout() {
 // <neuve-auth> … ヘッダーなどに置くログイン状態の表示
 //   未ログイン: 「ログイン」 / ログイン中: 「マイページ」「ログアウト」
 //   色は CSS カスタムプロパティ --neuve-auth-color / --neuve-auth-hover で貼り先から変えられる
+//   hide-mypage 属性を付けると「マイページ」を出さない（ポータルのようにナビに別途あるとき）
 // ---------------------------------------------------------------------------
 class NeuveAuth extends HTMLElement {
     connectedCallback() {
@@ -255,7 +256,7 @@ class NeuveAuth extends HTMLElement {
         });
         this._unsubscribe = onUser((user) => {
             login.hidden = Boolean(user);
-            mypage.hidden = !user;
+            mypage.hidden = !user || this.hasAttribute('hide-mypage');
             logoutButton.hidden = !user;
         });
     }
