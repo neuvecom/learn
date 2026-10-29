@@ -21,7 +21,8 @@ import {
 
 const firebaseConfig = {
     apiKey: 'AIzaSyDhRoHgKeMiJbVf5Hy_2i2z68csyUl4sU8',
-    authDomain: 'how-to-use-vcv-rack-ja.firebaseapp.com',
+    // Google ログイン画面に「auth.neuve.com に移動」と出すため、Firebase Hosting のカスタムドメインを使う
+    authDomain: 'auth.neuve.com',
     projectId: 'how-to-use-vcv-rack-ja',
     storageBucket: 'how-to-use-vcv-rack-ja.firebasestorage.app',
     messagingSenderId: '615978577733',
