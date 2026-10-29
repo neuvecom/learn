@@ -57,20 +57,80 @@ export function fromDocId(docId) {
 
 const lessonsRef = (uid, courseId) => collection(db, 'users', uid, 'courses', courseId, 'lessons');
 
+// ---------------------------------------------------------------------------
+// ログイン前の完了記録（このブラウザの localStorage）
+//   未ログインで「完了」を押すと、コースごとに neuve-learn:done:<コース ID> へレッスン ID の配列を保存する。
+//   ログインした時点で（どのコースのページでもポータルでも）アカウントへまとめて引き継ぎ、端末側は消す。
+// ---------------------------------------------------------------------------
+const GUEST_PREFIX = 'neuve-learn:done:';
+
+function readGuest(courseId) {
+    try {
+        const ids = JSON.parse(localStorage.getItem(GUEST_PREFIX + courseId) || '[]');
+        return Array.isArray(ids) ? ids.map(String) : [];
+    } catch {
+        return [];
+    }
+}
+
+function writeGuest(courseId, ids) {
+    try {
+        if (ids.length > 0) localStorage.setItem(GUEST_PREFIX + courseId, JSON.stringify(ids));
+        else localStorage.removeItem(GUEST_PREFIX + courseId);
+    } catch {
+        // プライベートブラウズなどで保存できないときは記録しない
+    }
+}
+
+/** ログイン前に端末へ保存した完了をアカウントへ引き継ぐ（ユーザーごとに 1 回だけ実行） */
+let guestUpload = null;
+let guestUploadUid = null;
+function uploadGuest(user) {
+    if (guestUploadUid === user.uid && guestUpload) return guestUpload;
+    guestUploadUid = user.uid;
+    guestUpload = (async () => {
+        const courses = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key?.startsWith(GUEST_PREFIX)) courses.push(key.slice(GUEST_PREFIX.length));
+        }
+        for (const courseId of courses) {
+            const ids = readGuest(courseId);
+            try {
+                if (ids.length > 0) {
+                    await writeLessons(user.uid, courseId, ids.map((id) => [id, undefined]));
+                    await setDoc(doc(db, 'users', user.uid, 'courses', courseId), {
+                        lastLessonId: ids[ids.length - 1],
+                        updatedAt: serverTimestamp(),
+                    });
+                }
+                writeGuest(courseId, []);
+            } catch (error) {
+                // 失敗した分は端末に残し、次にページを開いたときに再挑戦する
+                console.error('ログイン前の進捗を引き継げませんでした', courseId, error);
+            }
+        }
+    })();
+    return guestUpload;
+}
+
 /** ログイン状態の変化を購読する。戻り値は購読解除の関数 */
 export function onUser(callback) {
     return onAuthStateChanged(auth, callback);
 }
 
 /** ログインが確定するまで待って、現在のユーザー（未ログインなら null）を返す */
-export function currentUser() {
-    return auth.authStateReady().then(() => auth.currentUser);
+export async function currentUser() {
+    await auth.authStateReady();
+    const user = auth.currentUser;
+    if (user) await uploadGuest(user);
+    return user;
 }
 
-/** 指定コースの完了済みレッスン ID の Set を返す（未ログインなら空） */
+/** 指定コースの完了済みレッスン ID の Set を返す（未ログインならこのブラウザに保存した分） */
 export async function getCompleted(courseId) {
     const user = await currentUser();
-    if (!user) return new Set();
+    if (!user) return new Set(readGuest(courseId));
     const snapshot = await getDocs(lessonsRef(user.uid, courseId));
     return new Set(snapshot.docs.map((d) => fromDocId(d.id)));
 }
@@ -96,6 +156,7 @@ function lessonData(local) {
 /**
  * レッスンの完了を記録する（done=false で取り消す）。未ログインなら false を返して何もしない。
  * local に端末の保存値を渡すと、別の端末で同じ値を復元できる
+ * （端末に独自の保存先を持つコースが使う。持たないコースは <neuve-lesson-done> が setCompletedOrGuest を使う）
  */
 export async function setCompleted(courseId, lessonId, done, local) {
     const user = await currentUser();
@@ -111,6 +172,18 @@ export async function setCompleted(courseId, lessonId, done, local) {
         await deleteDoc(lessonRef);
     }
     return true;
+}
+
+/**
+ * レッスンの完了を記録する。未ログインならこのブラウザに保存し、ログインしたときにアカウントへ引き継ぐ。
+ * 戻り値はアカウントに記録したら true、ブラウザに保存したら false
+ */
+export async function setCompletedOrGuest(courseId, lessonId, done) {
+    if (await setCompleted(courseId, lessonId, done)) return true;
+    const ids = readGuest(courseId).filter((id) => id !== String(lessonId));
+    if (done) ids.push(String(lessonId));
+    writeGuest(courseId, ids);
+    return false;
 }
 
 /** まとめて書き込む（1 回のバッチは 500 件までなので分ける） */
@@ -269,85 +342,96 @@ class NeuveAuth extends HTMLElement {
 
 // ---------------------------------------------------------------------------
 // <neuve-lesson-done course="korg-gadget" lesson="stage1/lesson-1-1">
-//   レッスン末尾に置く「完了にする」ボタン。未ログイン時はログインへの案内を出す。
+//   レッスン末尾に置く「完了にする」ボタン。未ログインでもこのブラウザに記録でき、ログインすると引き継ぐ。
 //   状態が変わると change イベント（detail: { course, lesson, done }）を発行する。
 // ---------------------------------------------------------------------------
 class NeuveLessonDone extends HTMLElement {
     connectedCallback() {
-        if (this.shadowRoot) return;
         const course = this.getAttribute('course');
         const lesson = this.getAttribute('lesson');
-        const root = this.attachShadow({ mode: 'open' });
-        root.innerHTML = `
-            <style>
-                :host {
-                    display: block; margin: 2rem 0; padding: 1rem 1.25rem; font: inherit;
-                    border: 1px solid var(--neuve-border, rgba(128, 128, 128, 0.35)); border-radius: 0.5rem;
-                }
-                [hidden] { display: none !important; }
-                p { margin: 0; }
-                .row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
-                a { color: var(--neuve-accent, #e8710a); }
-                button {
-                    padding: 0.5rem 1rem; border-radius: 999rem; font: inherit; font-weight: 600; cursor: pointer;
-                    border: 1px solid var(--neuve-accent, #e8710a); background: var(--neuve-accent, #e8710a);
-                    color: var(--neuve-on-accent, #fff);
-                }
-                button.done { background: transparent; color: var(--neuve-accent, #e8710a); }
-                button:disabled { opacity: 0.6; cursor: wait; }
-            </style>
-            <p data-signed-out hidden><a data-login>ログイン</a>すると、このレッスンの完了を記録して、どの端末からでも続きから学べます。</p>
-            <div class="row" data-signed-in hidden>
-                <button type="button" data-toggle>このレッスンを完了にする</button>
-                <span data-message aria-live="polite"></span>
-            </div>
-        `;
-        const signedOut = root.querySelector('[data-signed-out]');
-        const signedIn = root.querySelector('[data-signed-in]');
-        const button = root.querySelector('[data-toggle]');
-        const message = root.querySelector('[data-message]');
-        root.querySelector('[data-login]').href = loginUrl();
-        let done = false;
+        if (!this.shadowRoot) {
+            const root = this.attachShadow({ mode: 'open' });
+            root.innerHTML = `
+                <style>
+                    :host {
+                        display: block; margin: 2rem 0; padding: 1rem 1.25rem; font: inherit;
+                        border: 1px solid var(--neuve-border, rgba(128, 128, 128, 0.35)); border-radius: 0.5rem;
+                    }
+                    [hidden] { display: none !important; }
+                    p { margin: 0.75rem 0 0; font-size: 0.875em; opacity: 0.85; }
+                    .row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+                    a { color: var(--neuve-accent, #e8710a); }
+                    button {
+                        padding: 0.5rem 1rem; border-radius: 999rem; font: inherit; font-weight: 600; cursor: pointer;
+                        border: 1px solid var(--neuve-accent, #e8710a); background: var(--neuve-accent, #e8710a);
+                        color: var(--neuve-on-accent, #fff);
+                    }
+                    button.done { background: transparent; color: var(--neuve-accent, #e8710a); }
+                    button:disabled { opacity: 0.6; cursor: wait; }
+                </style>
+                <div class="row">
+                    <button type="button" data-toggle>このレッスンを完了にする</button>
+                    <span data-message aria-live="polite"></span>
+                </div>
+                <p data-guest hidden>
+                    完了の記録はこのブラウザに保存されます。<a data-login>ログイン</a>すると記録を引き継いで、どの端末からでも続きから学べます。
+                </p>
+            `;
+            this._button = root.querySelector('[data-toggle]');
+            this._message = root.querySelector('[data-message]');
+            this._guest = root.querySelector('[data-guest]');
+            this._button.addEventListener('click', () => this._toggle(course, lesson));
+        }
+        this._guest.querySelector('[data-login]').href = loginUrl();
+        this._done = false;
 
-        const render = () => {
-            button.textContent = done ? '完了を取り消す' : 'このレッスンを完了にする';
-            button.classList.toggle('done', done);
-            message.textContent = done ? '✓ 完了済み' : '';
-        };
-
+        // ログイン状態が変わるたびに読み直す（ログインした直後はブラウザの記録を引き継いでから読む）
         this._unsubscribe = onUser(async (user) => {
-            signedOut.hidden = Boolean(user);
-            signedIn.hidden = !user;
-            if (!user) return;
+            this._guest.hidden = Boolean(user);
             try {
-                done = (await getCompleted(course)).has(lesson);
-                render();
+                this._done = (await getCompleted(course)).has(lesson);
+                this._render();
             } catch (error) {
                 console.error(error);
-                message.textContent = '進捗を読み込めませんでした。';
+                this._message.textContent = '進捗を読み込めませんでした。';
             }
         });
+    }
 
-        button.addEventListener('click', async () => {
-            button.disabled = true;
-            try {
-                await setCompleted(course, lesson, !done);
-                done = !done;
-                render();
-                this.dispatchEvent(new CustomEvent('change', { detail: { course, lesson, done }, bubbles: true }));
-            } catch (error) {
-                console.error(error);
-                message.textContent = '保存できませんでした。時間をおいて再度お試しください。';
-            } finally {
-                button.disabled = false;
-            }
-        });
+    _render() {
+        this._button.textContent = this._done ? '完了を取り消す' : 'このレッスンを完了にする';
+        this._button.classList.toggle('done', this._done);
+        this._message.textContent = this._done ? '✓ 完了済み' : '';
+    }
+
+    async _toggle(course, lesson) {
+        this._button.disabled = true;
+        try {
+            await setCompletedOrGuest(course, lesson, !this._done);
+            this._done = !this._done;
+            this._render();
+            this.dispatchEvent(
+                new CustomEvent('change', { detail: { course, lesson, done: this._done }, bubbles: true })
+            );
+        } catch (error) {
+            console.error(error);
+            this._message.textContent = '保存できませんでした。時間をおいて再度お試しください。';
+        } finally {
+            this._button.disabled = false;
+        }
     }
 
     disconnectedCallback() {
         this._unsubscribe?.();
     }
 }
+
+// どのページでも、ログインした時点でブラウザに保存した完了をアカウントへ引き継ぐ
+onUser((user) => {
+    if (user) uploadGuest(user);
+    // ログアウトしたら、次にログインしたとき改めて引き継げるようにする
+    else guestUploadUid = null;
+});
 
 if (!customElements.get('neuve-auth')) customElements.define('neuve-auth', NeuveAuth);
 if (!customElements.get('neuve-lesson-done')) customElements.define('neuve-lesson-done', NeuveLessonDone);
@@ -364,6 +448,7 @@ const api = {
     getCompleted,
     getCompletedRecords,
     setCompleted,
+    setCompletedOrGuest,
     syncCompleted,
     mirrorLocalStorage,
     getCourseSummaries,
