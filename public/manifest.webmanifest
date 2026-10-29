@@ -1,0 +1,21 @@
+{
+    "id": "/learn/",
+    "name": "neuve 学習コース",
+    "short_name": "neuve 学習",
+    "description": "音楽制作・Web 解析・開発ツールを無料で学べる neuve の学習コース。全コースの進捗をマイページでまとめて確認できます。",
+    "lang": "ja",
+    "start_url": "/learn/mypage/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#fbfaf7",
+    "theme_color": "#e8710a",
+    "icons": [
+        { "src": "/learn/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+        { "src": "/learn/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+        { "src": "/learn/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    ],
+    "shortcuts": [
+        { "name": "マイページ", "url": "/learn/mypage/" },
+        { "name": "コース一覧", "url": "/learn/" }
+    ]
+}
