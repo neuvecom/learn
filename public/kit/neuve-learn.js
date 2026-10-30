@@ -295,9 +295,11 @@ export async function logout() {
 
 // ---------------------------------------------------------------------------
 // <neuve-auth> … ヘッダーなどに置くログイン状態の表示
-//   未ログイン: 「ログイン」 / ログイン中: 「マイページ」「ログアウト」
+//   常に「コース一覧」（ポータルへ戻る）を出し、未ログイン: 「ログイン」 / ログイン中: 「マイページ」「ログアウト」
+//   ホーム画面に追加したアプリ（PWA）にはブラウザの戻るボタンが無いので、コースからポータルへ戻る道はこのリンクが担う
 //   色は CSS カスタムプロパティ --neuve-auth-color / --neuve-auth-hover で貼り先から変えられる
 //   hide-mypage 属性を付けると「マイページ」を出さない（ポータルのようにナビに別途あるとき）
+//   hide-home 属性を付けると「コース一覧」を出さない（ポータル自身）
 // ---------------------------------------------------------------------------
 class NeuveAuth extends HTMLElement {
     connectedCallback() {
@@ -313,6 +315,7 @@ class NeuveAuth extends HTMLElement {
                 }
                 a:hover, button:hover { color: var(--neuve-auth-hover, inherit); text-decoration: underline; }
             </style>
+            <a part="home" data-home>コース一覧</a>
             <a part="login" data-login hidden>ログイン</a>
             <a part="mypage" data-mypage hidden>マイページ</a>
             <button part="logout" type="button" data-logout hidden>ログアウト</button>
@@ -320,6 +323,9 @@ class NeuveAuth extends HTMLElement {
         const login = root.querySelector('[data-login]');
         const mypage = root.querySelector('[data-mypage]');
         const logoutButton = root.querySelector('[data-logout]');
+        const home = root.querySelector('[data-home]');
+        home.href = portalUrl;
+        home.hidden = this.hasAttribute('hide-home');
         mypage.href = mypageUrl;
         login.addEventListener('click', () => {
             login.href = loginUrl();
