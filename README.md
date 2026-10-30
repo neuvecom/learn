@@ -24,7 +24,7 @@ https://neuve.com/learn/ で公開している、neuve の学習コース共通�
 ```html
 <script type="module" src="https://neuve.com/learn/kit/neuve-learn.js"></script>
 
-<!-- ヘッダー: ログイン / マイページ・ログアウト -->
+<!-- ヘッダー: コース一覧（ポータルへ戻る）/ ログイン / マイページ・ログアウト -->
 <neuve-auth></neuve-auth>
 
 <!-- レッスン末尾: 完了ボタン（未ログイン時はログインへの案内） -->
